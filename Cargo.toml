@@ -1,0 +1,18 @@
+[package]
+name = "xplorerbt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.53.1", features = ["full"] }
+zmq = "0.10.0"
+tokio-postgres = { version = "0.7.18", features = ["with-uuid-1", "with-serde_json-1", "with-chrono-0_4"] }
+deadpool-postgres = "0.14.2"
+rust_decimal = { version = "1.43.0", features = ["db-tokio-postgres"] }
+axum = "0.8.9"
+serde = { version = "1.0.229", features = ["derive"] }
+chrono = "0.4.45"
+dashmap = "6.2.1"
+reqwest = { version = "0.13.5", features = ["json"] }
+
+bitcoin = { git = "https://github.com/privkeyio/rust-bitcoin", rev = "e9aa336977e334f29fbe440a0dc0d21fa739fbf6" }

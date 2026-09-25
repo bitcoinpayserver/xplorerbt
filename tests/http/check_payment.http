@@ -1,0 +1,7 @@
+POST localhost:8000/api/v1/check/payment
+Content-Type: application/json
+
+{
+  "address": "bcrt1p6vsk3jkk3apj3n97cvzqfahxk6a8f6enqgxgp7qm2wykvc92ppxsyxtyes",
+  "webhook_url": "http://localhost:50051/check/payment?id=88b934bc-fc29-49b8-b76b-5b8a01c8062e"
+}
