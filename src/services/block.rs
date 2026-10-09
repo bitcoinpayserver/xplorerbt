@@ -20,7 +20,9 @@ impl BlockService {
     }
 
     pub fn block_height(block: &Block) -> i32 {
-        if block.header.v2.is_some() { block.header.v2.unwrap().height } else {
+        if block.header.v2.is_some() {
+            block.header.v2.unwrap().height
+        } else {
             block.bip34_block_height().unwrap() as i32
         }
     }
