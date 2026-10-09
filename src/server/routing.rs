@@ -1,4 +1,4 @@
-use crate::models::{AddressInfo, PaymentStatus};
+use crate::models::AddressInfo;
 use crate::server::config::Config;
 use crate::services::mempool::MempoolService;
 use axum::extract::State;
@@ -6,7 +6,6 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rust_decimal::Decimal;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -42,10 +41,4 @@ async fn check_payment(
 
     let mempool = Arc::make_mut(&mut state.mempool);
     mempool.add_address(address, webhook_url);
-
-
-    Json(PaymentStatus::Pending {
-        tx_id: "".to_string(),
-        amount: Decimal::new(0i64, 1u32)
-    }).into_response()
 }
