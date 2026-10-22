@@ -23,7 +23,6 @@ impl ZMQEngine {
         let tx_mempool = mempool.clone();
         let block_mempool = mempool;
 
-        let tx_service = tx_service.clone();
         let block_tx_service = tx_service.clone();
 
         spawn_blocking(move || {
@@ -32,15 +31,15 @@ impl ZMQEngine {
                 let _ = match tx_socket.recv_bytes(0) {
                     Ok(data) => data,
                     Err(e) => {
-                        eprintln!("failed to get first bytes: {}", e);
-                        vec![]
+                        eprintln!("failed to get first bytes: {}, skipping to the next incoming bytes", e);
+                        continue;
                     }
                 };
                 let payload = match tx_socket.recv_bytes(0) {
                     Ok(payload) => payload,
                     Err(e) => {
-                        eprintln!("failed to get payload: {}", e);
-                        vec![]
+                        eprintln!("failed to get payload: {}, skipping to the next incoming bytes", e);
+                        continue;
                     }
                 };
 
@@ -48,8 +47,8 @@ impl ZMQEngine {
                     let _ = match tx_socket.recv_bytes(0) {
                         Ok(data) => data,
                         Err(e) => {
-                            eprintln!("failed to get last bytes: {}", e);
-                            vec![]
+                            eprintln!("failed to get last bytes: {}, skipping to the next incoming bytes", e);
+                            continue;
                         }
                     };
                 }
@@ -73,16 +72,25 @@ impl ZMQEngine {
             loop {
                 let _ = match block_socket.recv_bytes(0) {
                     Ok(data) => data,
-                    Err(_) => break
+                    Err(e) => {
+                        eprintln!("failed to get first bytes: {}, skipping to the next incoming bytes", e);
+                        continue;
+                    }
                 };
                 let payload = match block_socket.recv_bytes(0) {
                     Ok(payload) => payload,
-                    Err(_) => break
+                    Err(e) => {
+                        eprintln!("failed to get payload: {}, skipping to the next incoming bytes", e);
+                        continue;
+                    }
                 };
                 if block_socket.get_rcvmore().unwrap_or(false) {
                     let _ = match block_socket.recv_bytes(0) {
                         Ok(data) => data,
-                        Err(_) => break
+                        Err(e) => {
+                            eprintln!("failed to get last bytes: {e}, skipping to the next incoming bytes");
+                            continue;
+                        }
                     };
                 }
 
