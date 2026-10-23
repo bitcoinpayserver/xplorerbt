@@ -29,8 +29,6 @@ impl Database {
         let pool = Pool::builder(pool_manager)
             .max_size(Self::MAX_CONNECTIONS).build().unwrap();
 
-        println!("\nDatabase Pool Status: {:?}", pool.status());
-
         Self { pool }
     }
 
