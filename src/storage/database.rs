@@ -22,6 +22,8 @@ impl Database {
 
         let postgres_config = tokio_postgres::Config::from_str(connection_string.as_str()).unwrap();
 
+        println!("Postgres Config: {:?}", postgres_config);
+
         let pool_manager = Manager::new(postgres_config, NoTls);
 
         let pool = Pool::builder(pool_manager)
