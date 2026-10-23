@@ -21,8 +21,8 @@ impl Config {
             blocks_url: "tcp://127.0.0.1:28333".to_string(),
             db_host: "localhost".to_string(),
             db_name: "postgres".to_string(),
-            db_username: "postgres".to_string(),
-            db_password: "".to_string(),
+            db_username: "bitcoinpay".to_string(),
+            db_password: "bitcoinpaypass".to_string(),
             network: Network::Regtest,
         }
     }
