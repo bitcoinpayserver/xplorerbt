@@ -22,12 +22,14 @@ impl Database {
 
         let postgres_config = tokio_postgres::Config::from_str(connection_string.as_str()).unwrap();
 
-        println!("Postgres Config: {:?}", postgres_config);
+        println!("\nPostgres Config: {:?}", postgres_config);
 
         let pool_manager = Manager::new(postgres_config, NoTls);
 
         let pool = Pool::builder(pool_manager)
             .max_size(Self::MAX_CONNECTIONS).build().unwrap();
+
+        println!("\nDatabase Pool Status: {:?}", pool.status());
 
         Self { pool }
     }
