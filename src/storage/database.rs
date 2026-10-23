@@ -20,6 +20,8 @@ impl Database {
                 config.db_name
             );
 
+        println!("Connecting to {}", connection_string);
+        
         let postgres_config = tokio_postgres::Config::from_str(connection_string.as_str()).unwrap();
 
         println!("\nPostgres Config: {:?}", postgres_config);
