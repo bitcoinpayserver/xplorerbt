@@ -1,4 +1,6 @@
+use std::env::var;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use bitcoin::Network;
 
 #[derive(Clone)]
@@ -14,16 +16,36 @@ pub struct Config {
 }
 
 impl Config {
+    const HOST: &'static str = "HOST";
+    const PORT: &'static str = "PORT";
+    const ZMQ_TX_URL: &'static str = "ZMQ_TX_URL";
+    const ZMQ_BLOCKS_URL: &'static str = "ZMQ_BLOCKS_URL";
+    const DB_HOST: &'static str = "DB_HOST";
+    const DB_NAME: &'static str = "DB_NAME";
+    const DB_USER: &'static str = "DB_USER";
+    const DB_PASSWORD: &'static str = "DB_PASSWORD";
+    const NETWORK: &'static str = "NETWORK";
+
     pub fn new() -> Self {
+        let host = var(Self::HOST).unwrap_or_else(|_| "0.0.0.0".to_string());
+        let port = var(Self::PORT).unwrap_or_else(|_| "8000".to_string());
+        let zmq_tx_url = var(Self::ZMQ_TX_URL).unwrap_or_else(|_| "tcp://127.0.0.1:28332".to_string());
+        let zmq_block_url = var(Self::ZMQ_BLOCKS_URL).unwrap_or_else(|_| "tcp://127.0.0.1:28333".to_string());
+        let db_host = var(Self::DB_HOST).unwrap_or_else(|_| "localhost".to_string());
+        let db_name = var(Self::DB_NAME).unwrap_or_else(|_| "postgres".to_string());
+        let db_username = var(Self::DB_USER).unwrap_or_else(|_| "postgres".to_string());
+        let db_password = var(Self::DB_PASSWORD).unwrap_or_else(|_| "".to_string());
+        let network = var(Self::NETWORK).unwrap_or_else(|_| "regtest".to_string());
+
         Self {
-            xplorer_addr: "0.0.0.0:8000".parse().unwrap(),
-            tx_url: "tcp://127.0.0.1:28332".to_string(),
-            blocks_url: "tcp://127.0.0.1:28333".to_string(),
-            db_host: "localhost".to_string(),
-            db_name: "postgres".to_string(),
-            db_username: "bitcoinpay".to_string(),
-            db_password: "bitcoinpaypass".to_string(),
-            network: Network::Regtest,
+            xplorer_addr: format!("{host}:{port}").parse().unwrap(),
+            tx_url: zmq_tx_url,
+            blocks_url: zmq_block_url,
+            db_host,
+            db_name,
+            db_username,
+            db_password,
+            network: Network::from_str(network.as_str()).unwrap(),
         }
     }
 }
