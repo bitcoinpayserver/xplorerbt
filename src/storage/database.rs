@@ -12,15 +12,11 @@ impl Database {
     const MAX_CONNECTIONS: usize = 10;
 
     pub fn new(config: &Config) -> Self {
-        let connection_string = format!(
-                "host={} user={} password={} dbname={}",
-                config.db_host,
-                config.db_username,
-                config.db_password,
-                config.db_name
-            );
-
-        let postgres_config = tokio_postgres::Config::from_str(connection_string.as_str()).unwrap();
+        let mut postgres_config = tokio_postgres::Config::new();
+        postgres_config.host(config.db_host.to_string());
+        postgres_config.user(config.db_username.to_string());
+        postgres_config.password(config.db_password.to_string());
+        postgres_config.dbname(config.db_name.to_string());
 
         let pool_manager = Manager::new(postgres_config, NoTls);
 
