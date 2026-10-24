@@ -1,5 +1,5 @@
 use std::env::var;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use bitcoin::Network;
 
@@ -27,8 +27,9 @@ impl Config {
     const NETWORK: &'static str = "NETWORK";
 
     pub fn new() -> Self {
-        let host = var(Self::HOST).unwrap_or_else(|_| "0.0.0.0".to_string());
-        let port = var(Self::PORT).unwrap_or_else(|_| "8000".to_string());
+        let host: IpAddr = var(Self::HOST).unwrap_or_else(|_| "0.0.0.0".to_string()).parse().unwrap();
+        let port: u16 = var(Self::PORT).unwrap_or_else(|_| "8000".to_string()).parse().unwrap();
+        let xplorer_addr = SocketAddr::new(host, port);
         let zmq_tx_url = var(Self::ZMQ_TX_URL).unwrap_or_else(|_| "tcp://127.0.0.1:28332".to_string());
         let zmq_block_url = var(Self::ZMQ_BLOCKS_URL).unwrap_or_else(|_| "tcp://127.0.0.1:28333".to_string());
         let db_host = var(Self::DB_HOST).unwrap_or_else(|_| "localhost".to_string());
@@ -38,7 +39,7 @@ impl Config {
         let network = var(Self::NETWORK).unwrap_or_else(|_| "regtest".to_string());
 
         Self {
-            xplorer_addr: format!("{host}:{port}").parse().unwrap(),
+            xplorer_addr,
             tx_url: zmq_tx_url,
             blocks_url: zmq_block_url,
             db_host,
