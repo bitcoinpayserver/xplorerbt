@@ -3,15 +3,17 @@ use crate::services::block::BlockService;
 use crate::storage::database::Database;
 use bitcoin::{Address, Block, Network, Transaction};
 use dashmap::DashMap;
+use reqwest::Client;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tokio::spawn;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use url::Url;
 
+#[derive(Clone)]
 pub struct TransactionService {
     utxos: Arc<DashMap<String, Utxo>>,
+    http_client: Client,
     db: Arc<Database>,
-    utxo_sender: Arc<UnboundedSender<Utxo>>,
     network: Network
 }
 
@@ -19,28 +21,29 @@ impl TransactionService {
     pub const CREATE_TABLE: &'static str = "CREATE TABLE IF NOT EXISTS xbt_tx_outs (
         id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
         tx_id VARCHAR(64) NOT NULL,
-        vout INT NOT NULL,
+        v_out INT NOT NULL,
         amount NUMERIC(24) NOT NULL,
         address VARCHAR(164)  DEFAULT NULL,
         block_height BIGINT DEFAULT NULL,
         confirmations INT DEFAULT NULL,
         webhook_url VARCHAR(164)  DEFAULT NULL,
         detected_at TIMESTAMPTZ DEFAULT now(),
-        UNIQUE(tx_id, vout)
+        UNIQUE(tx_id, v_out)
     )";
 
     pub(crate) const GET_ALL: &'static str = "SELECT * FROM xbt_tx_outs;";
 
-    const UPDATE_TX_OUT_CONFIRMATIONS: &'static str = "UPDATE xbt_tx_outs SET confirmations = $1 WHERE tx_id = $2 AND vout = $3 RETURNING (tx_id, vout);";
+    const UPDATE_TX_OUT_CONFIRMATIONS: &'static str = "UPDATE xbt_tx_outs SET confirmations = $1 WHERE tx_id = $2 AND v_out = $3 RETURNING (tx_id, v_out);";
 
-    const UPDATE_TX_OUT_BLOCK_HEIGHT: &'static str = "UPDATE xbt_tx_outs SET block_height = $1 WHERE tx_id = $2 AND vout = $3 RETURNING (tx_id, vout);";
+    const UPDATE_TX_OUT_BLOCK_HEIGHT: &'static str = "UPDATE xbt_tx_outs SET block_height = $1 WHERE tx_id = $2 AND v_out = $3 RETURNING (tx_id, v_out);";
 
-    pub async fn new(db: Arc<Database>, utxo_sender: Arc<UnboundedSender<Utxo>>, network: Network) -> Self {
+    pub async fn new(db: Arc<Database>, network: Network) -> Self {
         let utxos = Arc::new(Self::load_utxos(db.clone()).await);
+        let client = Client::new();
         Self {
             utxos,
+            http_client: client,
             db,
-            utxo_sender,
             network
         }
     }
@@ -69,17 +72,17 @@ impl TransactionService {
                 let amount = Decimal::new(output.value.to_sat() as i64, 0);
                 let utxo = Utxo {
                     tx_id: tx_id.to_string(),
-                    vout,
+                    v_out: vout,
                     amount,
                     address: address_string,
                     webhook_url,
                     block_height: None,
-                    confirmations: None,
+                    confirmations: Some(0),
                 };
 
-                self.utxo_sender.send(utxo.clone()).unwrap();
+                self.add_utxo(utxo.clone());
 
-                self.add_utxo(utxo);
+                self.broadcast_tx_out(utxo).await;
             }
 
             vout = vout + 1;
@@ -97,20 +100,21 @@ impl TransactionService {
             let tx_id = tx.compute_txid().to_string();
             for outpoint in &outpoints {
                 let mut utxo = self.utxos.get_mut(outpoint).unwrap();
-                if utxo.confirmations.is_none() && utxo.tx_id == tx_id {
+
+                if utxo.confirmations == Some(0) && utxo.tx_id == tx_id {
                     utxo.update_confirmations(1);
 
                     utxo.block_height = Some(height as i64);
 
-                    self.utxo_sender.send(utxo.value().clone()).unwrap();
+                    self.broadcast_tx_out(utxo.value().clone()).await;
 
-                    match Database::tx_query_one(&db_tx, Self::UPDATE_TX_OUT_CONFIRMATIONS, &[&1, &tx_id, &utxo.vout]).await {
+                    match Database::tx_query_one(&db_tx, Self::UPDATE_TX_OUT_CONFIRMATIONS, &[&1, &tx_id, &utxo.v_out]).await {
                         Ok(_) => {},
                         Err(e) => {
                             eprintln!("failed to update tx out confirmations {:?}", e);
                         }
                     };
-                    match Database::tx_query_one(&db_tx, Self::UPDATE_TX_OUT_BLOCK_HEIGHT, &[&(height as i64), &tx_id, &utxo.vout]).await {
+                    match Database::tx_query_one(&db_tx, Self::UPDATE_TX_OUT_BLOCK_HEIGHT, &[&(height as i64), &tx_id, &utxo.v_out]).await {
                         Ok(_) => {},
                         Err(e) => {
                             eprintln!("failed to update tx out block height {:?}", e);
@@ -128,14 +132,9 @@ impl TransactionService {
                 confirmations = 1 + ((height as i64) - utxo.block_height.unwrap()) as i32;
                 utxo.update_confirmations(confirmations);
 
-                match self.utxo_sender.send(utxo.value().clone()) {
-                    Ok(_) => {},
-                    Err(e) => {
-                        eprintln!("failed to send utxo to broadcaster {:?}", e.to_string());
-                    }
-                };
-                
-                match Database::tx_query_one(&db_tx, Self::UPDATE_TX_OUT_CONFIRMATIONS, &[&confirmations, &utxo.tx_id, &utxo.vout]).await {
+                self.broadcast_tx_out(utxo.value().clone()).await;
+
+                match Database::tx_query_one(&db_tx, Self::UPDATE_TX_OUT_CONFIRMATIONS, &[&confirmations, &utxo.tx_id, &utxo.v_out]).await {
                     Ok(_) => {},
                     Err(e) => {
                         eprintln!("failed to update tx out confirmations {:?}", e);
@@ -147,23 +146,28 @@ impl TransactionService {
         db_tx.commit().await.unwrap();
     }
 
-    pub async fn start_broadcasting_txs(mut utxo_receiver: UnboundedReceiver<Utxo>) {
-        let client = reqwest::Client::new();
-
+    async fn broadcast_tx_out(&self, utxo: Utxo) {
+        let client = self.http_client.clone();
         spawn(async move {
-            while let Some(utxo) = utxo_receiver.recv().await {
-                match client.post(&utxo.webhook_url)
-                    .json(&utxo)
-                    .send().await {
-                    Ok(response) => response,
-                    Err(e) => {
-                        eprintln!("failed to broadcast output: {}:{}", utxo.tx_id, utxo.vout);
-                        eprintln!("{}", e);
-                        continue;
-                    }
-                };
-            }
+            match client.post(&utxo.webhook_url)
+                .json(&utxo)
+                .send().await {
+                Ok(_) => {
+                    let url = Url::parse(&utxo.webhook_url).unwrap();
+                    let (_, tracking_id_value) = url.query_pairs().next().unwrap();
+                    let tracking_id = tracking_id_value.to_string();
+                    println!("\ntx output \"{}:{}\" sent to payment \"{tracking_id}\"", utxo.tx_id, utxo.v_out);
+                },
+                Err(_) => {
+                    eprintln!("failed to broadcast tx output \"{}:{}\"", utxo.tx_id, utxo.v_out);
+                }
+            };
         });
+    }
+
+    fn add_utxo(&self, utxo: Utxo) {
+        let outpoint = format!("{}:{}", utxo.tx_id, utxo.v_out);
+        self.utxos.insert(outpoint, utxo);
     }
 
     pub async fn load_utxos(db: Arc<Database>) -> DashMap<String, Utxo> {
@@ -175,14 +179,9 @@ impl TransactionService {
         let utxos: DashMap<String, Utxo> = DashMap::new();
         for row in tx_outs_rows {
             let utxo = Utxo::from_row(&row);
-            let outpoint = format!("{}:{}", utxo.tx_id, utxo.vout);
+            let outpoint = format!("{}:{}", utxo.tx_id, utxo.v_out);
             utxos.insert(outpoint, utxo);
         }
         utxos
-    }
-
-    fn add_utxo(&self, utxo: Utxo) {
-        let outpoint = format!("{}:{}", utxo.tx_id, utxo.vout);
-        self.utxos.insert(outpoint, utxo);
     }
 }

@@ -16,3 +16,4 @@ dashmap = "6.2.1"
 reqwest = { version = "0.13.5", features = ["json"] }
 
 bitcoin = { git = "https://github.com/privkeyio/rust-bitcoin", rev = "e9aa336977e334f29fbe440a0dc0d21fa739fbf6" }
+url = "2.5.8"

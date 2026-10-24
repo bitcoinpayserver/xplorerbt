@@ -4,6 +4,7 @@ use bitcoin::{Block, Transaction};
 use std::error::Error;
 use std::sync::Arc;
 use tokio::spawn;
+use tokio::task::spawn_blocking;
 use zmq::{Socket, SUB};
 use crate::services::tx::TransactionService;
 
@@ -25,20 +26,21 @@ impl ZMQEngine {
         let tx_service = tx_service.clone();
         let block_tx_service = tx_service.clone();
 
-        spawn(async move {
+        spawn_blocking(move || {
+            let tx_socket = tx_socket;
             loop {
                 let _ = match tx_socket.recv_bytes(0) {
                     Ok(data) => data,
                     Err(e) => {
                         eprintln!("failed to get first bytes: {}", e);
-                        break
+                        vec![]
                     }
                 };
                 let payload = match tx_socket.recv_bytes(0) {
                     Ok(payload) => payload,
                     Err(e) => {
                         eprintln!("failed to get payload: {}", e);
-                        break
+                        vec![]
                     }
                 };
 
@@ -47,27 +49,27 @@ impl ZMQEngine {
                         Ok(data) => data,
                         Err(e) => {
                             eprintln!("failed to get last bytes: {}", e);
-                            break
+                            vec![]
                         }
                     };
                 }
 
-                let tx: Transaction = match deserialize(&payload) {
-                    Ok(tx) => tx,
-                    Err(e) => {
+                let tx_mempool = tx_mempool.clone();
+                let tx_service = tx_service.clone();
+                spawn(async move {
+                    let tx: Transaction = deserialize(&payload).unwrap_or_else(|e| {
                         eprintln!("failed to deserialize transaction: {}", e);
-                        break
-                    }
-                };
+                        panic!()
+                    });
 
-                tx_mempool.save_new_utxos(&tx).await;
+                    tx_mempool.save_new_utxos(&tx).await;
 
-                let updated_addresses = tx_mempool.get_addresses();
-                tx_service.update_utxos_unconfirmed(&tx, updated_addresses).await
-            }
-        });
+                    let updated_addresses = tx_mempool.get_addresses();
+                    tx_service.update_utxos_unconfirmed(&tx, updated_addresses).await;
+                });
+            }});
 
-        spawn( async move {
+        spawn_blocking( move || {
             loop {
                 let _ = match block_socket.recv_bytes(0) {
                     Ok(data) => data,
@@ -84,17 +86,18 @@ impl ZMQEngine {
                     };
                 }
 
-                let block: Block = match deserialize(&payload) {
-                    Ok(block) => block,
-                    Err(e) => {
+                let block_mempool = block_mempool.clone();
+                let block_tx_service = block_tx_service.clone();
+                spawn(async move {
+                    let block: Block = deserialize(&payload).unwrap_or_else(|e| {
                         eprintln!("{:?}", e);
-                        break
-                    }
-                };
+                        panic!()
+                    });
 
-                block_mempool.save_block(&block).await;
+                    block_mempool.save_block(&block).await;
 
-                block_tx_service.update_utxo_confirmations(&block).await;
+                    block_tx_service.update_utxo_confirmations(&block).await;
+                });
             }
         });
 

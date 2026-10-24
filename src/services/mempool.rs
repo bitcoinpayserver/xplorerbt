@@ -16,7 +16,7 @@ pub struct MempoolService {
 }
 
 impl MempoolService  {
-    const INSERT_TX_OUT: &'static str = "INSERT INTO xbt_tx_outs (tx_id, vout, amount, address, webhook_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tx_id, vout) DO NOTHING RETURNING id";
+    const INSERT_TX_OUT: &'static str = "INSERT INTO xbt_tx_outs (tx_id, v_out, amount, address, webhook_url) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tx_id, v_out) DO NOTHING RETURNING id";
 
     const INSERT_BLOCK: &'static str = "INSERT INTO xbt_blocks (hash, prev_hash, height, timestamp) VALUES ($1, $2, $3, $4) RETURNING id";
 
