@@ -120,7 +120,9 @@ impl ZMQEngine {
             },
         };
 
-        let sequence = u32::from_le_bytes(sequence.to_vec().try_into().unwrap());
+        let sequence = if sequence.len() == 4 {
+            u32::from_le_bytes(sequence.to_vec().try_into().unwrap())
+        } else { 0u32 };
 
         Ok(ZMQMessage::new(topic, payload.to_vec(), sequence))
     }
