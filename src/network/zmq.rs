@@ -11,7 +11,7 @@ use tokio::spawn;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::spawn_blocking;
-use zmq::{Message, SUB, Socket};
+use zmq::{Context, Message, Socket, SUB};
 
 pub struct ZMQEngine;
 
@@ -22,13 +22,14 @@ impl ZMQEngine {
         mempool_service: Arc<MempoolService>,
         tx_service: Arc<TransactionService>
     ) -> Result<(), Box<dyn Error>> {
-
+        let zmq_context = Arc::new(Context::new());
         let (tx_sender, mut tx_receiver) = channel::<ZMQMessage>(12000);
         let (block_sender, mut block_receiver) = channel::<ZMQMessage>(12000);
 
+        let tx_zmq_context = Arc::clone(&zmq_context);
         let tx_endpoint = tx_endpoint.to_string();
         spawn_blocking(move || {
-            let tx_socket = Self::subscribe_to_txs(&tx_endpoint).expect("failed to subscribe to txs");
+            let tx_socket = Self::subscribe_to_txs(&tx_zmq_context, &tx_endpoint).expect("failed to subscribe to txs");
             loop {
                 let message = match Self::get_message(&tx_socket) {
                     Ok(message) => message,
@@ -51,9 +52,10 @@ impl ZMQEngine {
             }
         });
 
+        let blk_zmq_context = zmq_context;
         let blk_endpoint = blk_endpoint.to_string();
         spawn_blocking( move || {
-            let block_socket = Self::subscribe_to_blocks(&blk_endpoint).expect("failed to subscribe to blocks");
+            let block_socket = Self::subscribe_to_blocks(&blk_zmq_context, &blk_endpoint).expect("failed to subscribe to blocks");
             loop {
                 let message = match Self::get_message(&block_socket) {
                     Ok(message) => message,
@@ -138,16 +140,14 @@ impl ZMQEngine {
         Ok(ZMQMessage::new(topic, payload.to_vec(), sequence))
     }
 
-    fn subscribe_to_txs(tx_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
-        let context = zmq::Context::new();
+    fn subscribe_to_txs(context: &Context, tx_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
         let tx_socket = context.socket(SUB)?;
         tx_socket.connect(tx_endpoint)?;
         tx_socket.set_subscribe(b"rawtx")?;
         Ok(tx_socket)
     }
 
-    fn subscribe_to_blocks(blk_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
-        let context = zmq::Context::new();
+    fn subscribe_to_blocks(context: &Context, blk_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
         let blk_socket = context.socket(SUB)?;
         blk_socket.connect(blk_endpoint)?;
         blk_socket.set_subscribe(b"rawblock").expect("Failed to set rawblock subscribe");
