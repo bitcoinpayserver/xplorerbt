@@ -5,8 +5,11 @@ use bitcoin::consensus::deserialize;
 use bitcoin::{Block, Transaction};
 use std::error::Error;
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 use tokio::spawn;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::task::spawn_blocking;
 use zmq::{Message, SUB, Socket};
 
@@ -38,7 +41,17 @@ impl ZMQEngine {
                         continue;
                     }
                 };
-                tx_sender.try_send(message).unwrap();
+                if let Err(e) = tx_sender.try_send(message) {
+                    match e {
+                        TrySendError::Full(_) => {
+                            sleep(Duration::from_millis(1000));
+                        }
+                        TrySendError::Closed(_) => {
+                            eprintln!("tx receiver is dropped, shutting down zmq tx thread worker");
+                            break;
+                        }
+                    }
+                };
             }
         });
 
@@ -53,7 +66,17 @@ impl ZMQEngine {
                         continue
                     }
                 };
-                block_sender.try_send(message).unwrap();
+                if let Err(e) = block_sender.try_send(message) {
+                    match e {
+                        TrySendError::Full(_) => {
+                            sleep(Duration::from_millis(1000));
+                        }
+                        TrySendError::Closed(_) => {
+                            eprintln!("block receiver is dropped, shutting down zmq block thread worker");
+                            break
+                        }
+                    }
+                };
             }
         });
 
