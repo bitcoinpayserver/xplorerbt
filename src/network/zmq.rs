@@ -37,17 +37,9 @@ impl ZMQEngine {
                         continue;
                     }
                 };
-                if let Err(e) = tx_sender.try_send(message) {
-                    match e {
-                        TrySendError::Full(_) => {
-                            eprintln!("zmq tx pipeline buffer full, waiting to drop some messages");
-                            std::thread::sleep(Duration::from_millis(10));
-                        }
-                        TrySendError::Closed(_) => {
-                            eprintln!("tx receiver is dropped, shutting down zmq tx thread worker");
-                            break;
-                        }
-                    }
+                if tx_sender.blocking_send(message).is_err() {
+                    eprintln!("tx receiver is dropped, shutting down zmq tx thread worker");
+                    break;
                 };
             }
         });
@@ -64,17 +56,9 @@ impl ZMQEngine {
                         continue
                     }
                 };
-                if let Err(e) = block_sender.try_send(message) {
-                    match e {
-                        TrySendError::Full(_) => {
-                            eprintln!("zmq block pipeline buffer full, waiting to drop some messages");
-                            std::thread::sleep(Duration::from_millis(10));
-                        }
-                        TrySendError::Closed(_) => {
-                            eprintln!("block receiver is dropped, shutting down zmq block thread worker");
-                            break
-                        }
-                    }
+                if block_sender.blocking_send(message).is_err() {
+                    eprintln!("block receiver is dropped, shutting down zmq block thread worker");
+                    break
                 };
             }
         });
@@ -109,7 +93,7 @@ impl ZMQEngine {
                         continue;
                     }
                 };
-
+                
                 mempool_service.save_block(&block).await;
 
                 tx_service.update_utxo_confirmations(&block).await;
