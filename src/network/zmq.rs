@@ -1,12 +1,14 @@
+use crate::models::ZMQMessage;
 use crate::services::mempool::MempoolService;
+use crate::services::tx::TransactionService;
 use bitcoin::consensus::deserialize;
 use bitcoin::{Block, Transaction};
 use std::error::Error;
 use std::sync::Arc;
 use tokio::spawn;
+use tokio::sync::mpsc::channel;
 use tokio::task::spawn_blocking;
-use zmq::{Socket, SUB};
-use crate::services::tx::TransactionService;
+use zmq::{Message, SUB, Socket};
 
 pub struct ZMQEngine;
 
@@ -17,101 +19,103 @@ impl ZMQEngine {
         mempool: Arc<MempoolService>,
         tx_service: Arc<TransactionService>
     ) -> Result<(), Box<dyn Error>> {
-        let tx_socket = Self::subscribe_to_txs(tx_endpoint).await?;
-        let block_socket = Self::subscribe_to_blocks(blk_endpoint).await?;
-
         let tx_mempool = mempool.clone();
         let block_mempool = mempool;
 
         let block_tx_service = tx_service.clone();
 
+        let (tx_sender, mut tx_receiver) = channel::<ZMQMessage>(12000);
+        let (block_sender, mut block_receiver) = channel::<ZMQMessage>(12000);
+
+        let tx_endpoint = tx_endpoint.to_string();
         spawn_blocking(move || {
-            let tx_socket = tx_socket;
+            let tx_socket = Self::subscribe_to_txs(&tx_endpoint).expect("failed to subscribe to txs");
             loop {
-                let _ = match tx_socket.recv_bytes(0) {
-                    Ok(data) => data,
-                    Err(e) => {
-                        eprintln!("failed to get first bytes: {}, skipping to the next incoming bytes", e);
+                let message = match Self::get_message(&tx_socket) {
+                    Ok(message) => message,
+                    Err(_) => {
+                        // Skip malformed message
                         continue;
                     }
                 };
-                let payload = match tx_socket.recv_bytes(0) {
-                    Ok(payload) => payload,
-                    Err(e) => {
-                        eprintln!("failed to get payload: {}, skipping to the next incoming bytes", e);
-                        continue;
-                    }
-                };
+                tx_sender.try_send(message).unwrap();
+            }
+        });
 
-                if tx_socket.get_rcvmore().unwrap_or(false) {
-                    let _ = match tx_socket.recv_bytes(0) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            eprintln!("failed to get last bytes: {}, skipping to the next incoming bytes", e);
-                            continue;
-                        }
-                    };
-                }
-
-                let tx_mempool = tx_mempool.clone();
-                let tx_service = tx_service.clone();
-                spawn(async move {
-                    let tx: Transaction = deserialize(&payload).unwrap_or_else(|e| {
-                        eprintln!("failed to deserialize transaction: {}", e);
-                        panic!()
-                    });
-
-                    tx_mempool.save_new_utxos(&tx).await;
-
-                    let updated_addresses = tx_mempool.get_addresses();
-                    tx_service.update_utxos_unconfirmed(&tx, updated_addresses).await;
-                });
-            }});
-
+        let blk_endpoint = blk_endpoint.to_string();
         spawn_blocking( move || {
+            let block_socket = Self::subscribe_to_blocks(&blk_endpoint).expect("failed to subscribe to blocks");
             loop {
-                let _ = match block_socket.recv_bytes(0) {
-                    Ok(data) => data,
+                let message = match Self::get_message(&block_socket) {
+                    Ok(message) => message,
+                    Err(_) => {
+                        // Skip malformed message
+                        continue
+                    }
+                };
+                block_sender.try_send(message).unwrap();
+            }
+        });
+
+        spawn( async move {
+            while let Some(message) = tx_receiver.recv().await {
+                let tx: Transaction = match deserialize(&message.body) {
+                    Ok(tx) => tx,
                     Err(e) => {
-                        eprintln!("failed to get first bytes: {}, skipping to the next incoming bytes", e);
+                        eprintln!("failed to deserialize transaction: {e}, skipping...");
                         continue;
                     }
                 };
-                let payload = match block_socket.recv_bytes(0) {
-                    Ok(payload) => payload,
+
+                tx_mempool.save_new_utxos(&tx).await;
+
+                let updated_addresses = tx_mempool.get_addresses();
+                tx_service.update_utxos_unconfirmed(&tx, updated_addresses).await;
+            }
+        });
+
+        spawn( async move {
+            while let Some(message) = block_receiver.recv().await {
+                let block: Block = match deserialize(&message.body) {
+                    Ok(block) => block,
                     Err(e) => {
-                        eprintln!("failed to get payload: {}, skipping to the next incoming bytes", e);
+                        eprintln!("failed to deserialize block: {e}, skipping...");
                         continue;
                     }
                 };
-                if block_socket.get_rcvmore().unwrap_or(false) {
-                    let _ = match block_socket.recv_bytes(0) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            eprintln!("failed to get last bytes: {e}, skipping to the next incoming bytes");
-                            continue;
-                        }
-                    };
-                }
 
-                let block_mempool = block_mempool.clone();
-                let block_tx_service = block_tx_service.clone();
-                spawn(async move {
-                    let block: Block = deserialize(&payload).unwrap_or_else(|e| {
-                        eprintln!("{:?}", e);
-                        panic!()
-                    });
+                block_mempool.save_block(&block).await;
 
-                    block_mempool.save_block(&block).await;
-
-                    block_tx_service.update_utxo_confirmations(&block).await;
-                });
+                block_tx_service.update_utxo_confirmations(&block).await;
             }
         });
 
         Ok(())
     }
-    async fn subscribe_to_txs(tx_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
+
+    fn get_message(socket: &Socket) -> Result<ZMQMessage, Box<dyn Error>> {
+        let mut topic = Message::new();
+        let mut payload = Message::new();
+        let mut sequence = Message::new();
+        socket.recv(&mut topic, 0)?;
+        socket.recv(&mut payload, 0)?;
+        socket.recv(&mut sequence, 0)?;
+
+        let topic = match String::from_utf8(topic.to_vec()){
+            Ok(topic) => topic,
+            Err(e) => {
+                eprintln!("failed to parse tx topic: {e}, skipping to the next incoming bytes");
+                return Err(Box::from(e));
+
+            },
+        };
+
+        let sequence = u32::from_le_bytes(sequence.to_vec().try_into().unwrap());
+
+        Ok(ZMQMessage::new(topic, payload.to_vec(), sequence))
+    }
+
+    fn subscribe_to_txs(tx_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
         let context = zmq::Context::new();
         let tx_socket = context.socket(SUB)?;
         tx_socket.connect(tx_endpoint)?;
@@ -119,7 +123,7 @@ impl ZMQEngine {
         Ok(tx_socket)
     }
 
-    async fn subscribe_to_blocks(blk_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
+    fn subscribe_to_blocks(blk_endpoint: &str) -> Result<Socket, Box<dyn Error>> {
         let context = zmq::Context::new();
         let blk_socket = context.socket(SUB)?;
         blk_socket.connect(blk_endpoint)?;

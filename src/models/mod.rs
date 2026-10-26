@@ -69,3 +69,20 @@ impl Utxo {
         self.confirmations = Some(confirmations);
     }
 }
+
+#[derive(Debug)]
+pub struct ZMQMessage {
+    pub topic: String,
+    pub body: Vec<u8>,
+    pub sequence: u32
+}
+
+impl ZMQMessage {
+    pub fn new(topic: String, body: Vec<u8>, sequence: u32) -> Self {
+        Self {
+            topic,
+            body,
+            sequence
+        }
+    }
+}
