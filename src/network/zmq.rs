@@ -19,13 +19,9 @@ impl ZMQEngine {
     pub async fn start(
         tx_endpoint: &str,
         blk_endpoint: &str,
-        mempool: Arc<MempoolService>,
+        mempool_service: Arc<MempoolService>,
         tx_service: Arc<TransactionService>
     ) -> Result<(), Box<dyn Error>> {
-        let tx_mempool = mempool.clone();
-        let block_mempool = mempool;
-
-        let block_tx_service = tx_service.clone();
 
         let (tx_sender, mut tx_receiver) = channel::<ZMQMessage>(12000);
         let (block_sender, mut block_receiver) = channel::<ZMQMessage>(12000);
@@ -80,22 +76,26 @@ impl ZMQEngine {
             }
         });
 
-        spawn( async move {
-            while let Some(message) = tx_receiver.recv().await {
-                let tx: Transaction = match deserialize(&message.body) {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        eprintln!("failed to deserialize transaction: {e}, skipping...");
-                        continue;
-                    }
-                };
+        {
+            let tx_service = tx_service.clone();
+            let mempool_service = mempool_service.clone();
+            spawn(async move {
+                while let Some(message) = tx_receiver.recv().await {
+                    let tx: Transaction = match deserialize(&message.body) {
+                        Ok(tx) => tx,
+                        Err(e) => {
+                            eprintln!("failed to deserialize transaction: {e}, skipping...");
+                            continue;
+                        }
+                    };
 
-                tx_mempool.save_new_utxos(&tx).await;
+                    mempool_service.save_new_utxos(&tx).await;
 
-                let updated_addresses = tx_mempool.get_addresses();
-                tx_service.update_utxos_unconfirmed(&tx, updated_addresses).await;
-            }
-        });
+                    let updated_addresses = mempool_service.get_addresses();
+                    tx_service.update_utxos_unconfirmed(&tx, updated_addresses).await;
+                }
+            });
+        }
 
         spawn( async move {
             while let Some(message) = block_receiver.recv().await {
@@ -107,9 +107,9 @@ impl ZMQEngine {
                     }
                 };
 
-                block_mempool.save_block(&block).await;
+                mempool_service.save_block(&block).await;
 
-                block_tx_service.update_utxo_confirmations(&block).await;
+                tx_service.update_utxo_confirmations(&block).await;
             }
         });
 
